@@ -3,8 +3,9 @@
  *
  * This relocates the already-shipped S620 extension out of the 16K stock image
  * and rebases only external branches whose 16K targets have been matched in
- * disassembly. It deliberately does NOT make the result flashable: timing and
- * smoothing differ on this firmware and their stock hook sites are not enabled.
+ * disassembly. It deliberately does NOT make the result production-flashable:
+ * timing and smoothing differ on this firmware and their stock hook sites are
+ * not enabled by the experimental bring-up.
  */
 
 import sourceManifest from "../s620/runtime.json";
@@ -90,11 +91,12 @@ const NEW_MODEL_ID = bytesFromHex("41f22060"); // movw r0,#0x1620
 const OLD_STOCK_FIRMWARE_ID = bytesFromHex("41f23000c0f22400"); // 0x00241030
 const NEW_STOCK_FIRMWARE_ID = bytesFromHex("40f22750c0f22600"); // 0x00260527
 const OLD_CAPABILITIES = bytesFromHex("0b20");
-const PORT_CAPABILITIES = bytesFromHex("0320"); // LiveConfig | Persistence; no LoopTiming claim yet
+const PORT_CAPABILITIES = bytesFromHex("0120"); // LiveConfig only; no persistence/timing claims in bring-up
 
 /**
  * Produce a relocated research blob. This is exported for static inspection and
- * tests only; no DeviceAdapter references it yet.
+ * the isolated /experimental test only; the production adapter registry does
+ * not reference it.
  */
 export function buildS62016KRuntimeResearchBlob(): Uint8Array {
   const manifest = sourceManifest as { base: number; blob: string };
