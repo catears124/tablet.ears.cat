@@ -190,12 +190,16 @@ export default function ExperimentalS62016K() {
           `expected 0x${S620_16K.firmware.protocolStockFirmwareId.toString(16)}`,
       );
     }
+    if (info.capabilities.length !== 1 || info.capabilities[0] !== "LiveConfig") {
+      throw new Error(`GET_INFO advertised unexpected capabilities: ${info.capabilities.join(", ") || "none"}`);
+    }
 
     // Read-only protocol check. Do not SET_CONFIG, SAVE_CONFIG or change timing.
     const config = await link.getConfig();
     setNormalSummary(
       `protocol ${info.protocolVersion}, runtime ${info.firmwareVersion}, model 0x${info.modelId.toString(16)}, ` +
-        `firmware 0x${info.stockFirmwareId.toString(16)}, config target=${config.targetRateHz}`,
+        `firmware 0x${info.stockFirmwareId.toString(16)}, capabilities=${info.capabilities.join("+")}, ` +
+        `config target=${config.targetRateHz}`,
     );
     setPenReports(0);
     normalUnsubscribeRef.current = link.onPenReport(() => setPenReports((count) => count + 1));
