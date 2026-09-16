@@ -1,62 +1,69 @@
 # Gaomon S620 (16K) port
 
-Status: research scaffold only. This directory is intentionally **not** registered in `ADAPTERS` yet and nothing here is reachable from the flashing UI.
+This directory is the isolated bring-up for the 16K-pressure S620 revision.
 
-## Verified device fingerprint
-
-Source: two byte-identical 128 KiB DFU reads from a 16K-pressure S620.
+## Pinned device
 
 - normal USB: `256c:006f`
 - DFU USB: `28e9:0189`
-- normal-mode discriminator: string descriptor `0xc9`, `GM001_T263_260527`
-- full backup SHA-256: `75849255b246dcffc4afa24a80ae33d0297e0caca81fd0c98fd9f0ea161db498`
-- stock application: `0x08004000..0x0800cd24` (`0x8d24` / 36132 bytes)
-- stock application SHA-256: `ec124d9675d3f35bb49f81b7e5f82f1dcada43f16d13d61fd571e3c87974212d`
-- `0x0800d000..0x0800f800` is erased in the captured stock image, so the candidate extension base is `0x0800d000`
-- digitizer: 33020 x 20320, pressure max 16383
+- OTD device string family: `GM001_T263_\\d{6}`
+- tested stock build: `GM001_T263_260527`
+- app: `0x08004000..0x0800cd24` (`0x8d24` bytes)
+- stock app SHA-256: `ec124d9675d3f35bb49f81b7e5f82f1dcada43f16d13d61fd571e3c87974212d`
+- first test-unit full backup SHA-256: `75849255b246dcffc4afa24a80ae33d0297e0caca81fd0c98fd9f0ea161db498`
 
-The original S620 runtime base (`0x0800cc00`) is inside the 16K stock application and would overwrite `0x124` bytes of live firmware. Never reuse it.
+The original S620 runtime base (`0x0800cc00`) overlaps `0x124` bytes of this stock application, so the 16K runtime is relocated to `0x0800d000`.
 
-## Verified code mappings
+## Verified old -> 16K mappings
 
-The USB/vendor-feature-report path is a near-exact relocated copy in the 16K firmware:
+The protocol/runtime scaffold currently rebases verified counterparts for:
 
-| original S620 | S620 (16K) | role |
-| --- | --- | --- |
-| `0x0800af00` | `0x0800b0e0` | feature-report helper |
-| `0x0800aea4` | `0x0800b084` | feature-report helper |
-| `0x0800b64c` | `0x0800b82c` | feature-report fallback |
-| `0x0800b6d0` | `0x0800b8b0` | feature-report continuation |
-| `0x0800b7bc` | `0x0800b99c` | feature-report dispatch |
-| `0x0800b7c4` | `0x0800b9a4` | feature-report dispatch |
-| descriptor `0x0800c579` | `0x0800c7e5` | feature report length byte (`0x07 -> 0x20`) |
-| smoothing `0x08004a90` | `0x08004ac4` | coordinate smoothing helper |
-| average `0x0800a04c` | `0x0800a23c` | averaging helper |
-| delay `0x08006b2e` | `0x08006b96` | microsecond delay helper |
-| barrel helper `0x08006cb4` | `0x08006d1c` | barrel-button rescan helper |
+- vendor feature-report helper/continuation/dispatch path
+- smoothing helper: `0x08004a90 -> 0x08004ac4`
+- averaging helper: `0x0800a04c -> 0x0800a23c`
+- delay helper: `0x08006b2e -> 0x08006b96`
+- barrel-button helper: `0x08006cb4 -> 0x08006d1c`
 
-The three protocol hook preimages are byte-identical after relocation and the descriptor preimage remains `9507`, so protocol-only bring-up is the first hardware target.
+The first hardware candidate enables only the protocol path:
 
-Mapped data-path call sites, intentionally not enabled yet:
+- `0x0800b824` -> runtime `+0x004`
+- `0x0800b884` -> runtime `+0x032`
+- `0x0800b994` -> runtime `+0x064`
+- `0x0800c7e5: 9507 -> 9520` (feature report 0x16 becomes 32 bytes)
 
-- averaging: `0x0800766e`, `0x0800767e`
-- fast barrel buttons: `0x0800803c`, `0x080080c0`
-- smoothing candidates: `0x080077be`, `0x080077d0`
+Every hook carries an exact stock preimage guard. The three 8-byte hook preimages and the descriptor preimage are unique in the pinned 128 KiB dump.
 
-## Why timing is not ported yet
+## /experimental bring-up
 
-The old S620 used four literal settle waits (27/20/30/150 us) and the current site maps requested Hz onto those four immediates. The 16K firmware rewrites that acquisition path: at least two waits are computed from a RAM value and the final literal wait is 120 us. Copying the old 294-530 Hz timing model would be technically wrong and could make a bootable-looking image unstable.
+The main installer still does not register this adapter. `/experimental` is intentionally separate and the first pass is pinned to the exact pre-test unit backup.
 
-Likewise, 16K smoothing no longer has the old four identical calls with hardcoded weight `0x40`; the two mapped calls receive a dynamic weight. The old wrapper must be changed to preserve 16K stock semantics before those hooks are enabled.
+The test is staged so the highest-risk operation is last:
 
-## Bring-up order
+1. Read the complete 128 KiB flash twice and require byte identity.
+2. Require the exact pinned stock application and exact first test-unit full backup hash.
+3. Build the relocated runtime and prove candidate changes are limited to the runtime pages plus stock pages `0x0800b800` and `0x0800c400`.
+4. Force a recovery-backup download before write controls unlock.
+5. Stage the runtime at `0x0800d000` without erasing anything. It is inert because no stock branch points to it yet. Read it back byte-for-byte.
+6. Close the DFU session. The user physically re-enters DFU before activation, preserving the existing no-erase-after-program invariant.
+7. Re-read the staged runtime and both complete stock activation pages. Refuse unless all match the verified candidate inputs.
+8. Erase and blank-check only `0x0800c400` and `0x0800b800` before any write.
+9. Program the non-executable HID-descriptor page first and the executable feature-report hook page last. Read both back byte-for-byte.
+10. Reboot normally and perform only read-only WebHID checks: 32-byte runtime framing, `GET_INFO`, `GET_CONFIG`, and observation of unchanged pen report `0x08` traffic.
 
-1. Relocate and rebase the runtime to `0x0800d000`.
-2. Enable only the three vendor-feature hooks plus the 32-byte descriptor length patch.
-3. Verify boot/enumeration and GET_INFO/GET_CONFIG over WebHID.
-4. Port averaging and fast-barrel hooks, then verify pen/pressure/buttons against stock behavior.
-5. Fix the smoothing wrapper for the 16K calling convention.
-6. Reverse/measure the 16K acquisition timing path and build a new rate model from hardware data.
-7. Only then add a full `DeviceAdapter`, factory-image source/restore path, and register it in `ADAPTERS`.
+No timing, smoothing, averaging, barrel-button or persistence write hook is active in this test.
 
-No user-facing support should be claimed before step 7.
+## Recovery
+
+`/experimental` accepts only the exact pinned pre-test full-flash backup for recovery. On a fresh DFU session it erases every page the experiment can touch, restores the original stock pages from that backup, leaves the originally-erased runtime pages erased, and verifies every page afterward. The resident bootloader is outside every experimental erase/write range.
+
+A live flash can never be mathematically zero-risk (for example, physical power loss during an erase/program transaction), but this sequence minimizes the write surface and keeps the DFU bootloader untouched so the failure mode remains a DFU restore rather than a bootloader overwrite.
+
+## Still blocked before production support
+
+- prove protocol-only candidate boots on hardware
+- prove normal pen report `0x08` remains live while the protocol hooks are active
+- port 16K smoothing semantics instead of assuming the old S620 call contract
+- reverse/measure the 16K timing path; do not inherit the original S620 294-530 Hz measurements
+- validate buttons, pressure, proximity/reacquisition and long-run behavior
+- source/pin a production factory image or define a same-device restore policy
+- only then register a real `DeviceAdapter` in `ADAPTERS`
