@@ -1,5 +1,5 @@
 import { S620_16K } from "../devices/s620-16k/fingerprint";
-import type { ExperimentalPageImage, S62016KProtocolCandidate } from "../devices/s620-16k/experimental-candidate";
+import type { S62016KProtocolCandidate } from "../devices/s620-16k/experimental-candidate";
 import { sha256Hex } from "../firmware/image";
 import { WebUsbDfuDevice } from "./webusb-dfu";
 
@@ -86,19 +86,24 @@ export async function stageS62016KRuntimeWithoutErase(
     throw new Error("runtime bounds changed after candidate verification");
   }
 
-  const current = await device.read(runtimeAddress, runtime.length);
-  if (equal(current, runtime)) {
+  const pageEnd = pageBase(runtimeEnd - 1) + S620_16K.flash.pageSize;
+  const wholeDestination = await device.read(runtimeAddress, pageEnd - runtimeAddress);
+  const existingRuntime = wholeDestination.slice(0, runtime.length);
+  const trailing = wholeDestination.slice(runtime.length);
+  if (equal(existingRuntime, runtime) && blank(trailing)) {
     onProgress?.({ phase: "verify", detail: "runtime already staged", done: runtime.length, total: runtime.length });
     return "already-staged";
   }
-  if (!blank(current)) {
-    throw new Error("runtime destination is no longer erased; refusing no-erase staging");
+  if (!blank(wholeDestination)) {
+    throw new Error("runtime destination pages are no longer erased; refusing no-erase staging");
   }
 
-  onProgress?.({ phase: "check", detail: "runtime destination is erased", done: 1, total: 1 });
+  onProgress?.({ phase: "check", detail: "entire runtime destination span is erased", done: 1, total: 1 });
   await writeBytes(device, runtimeAddress, runtime, onProgress, "stage inert runtime");
-  const readBack = await device.read(runtimeAddress, runtime.length);
-  if (!equal(readBack, runtime)) throw new Error("runtime staging read-back mismatch");
+  const readBack = await device.read(runtimeAddress, pageEnd - runtimeAddress);
+  if (!equal(readBack.slice(0, runtime.length), runtime) || !blank(readBack.slice(runtime.length))) {
+    throw new Error("runtime staging read-back mismatch or trailing bytes changed");
+  }
   onProgress?.({ phase: "verify", detail: "runtime staged and verified", done: runtime.length, total: runtime.length });
   return "written";
 }
@@ -136,9 +141,11 @@ async function eraseAndBlankCheckPages(
  * Activate only the protocol path. Call this only in a fresh DFU session after
  * the inert runtime stage has been read back successfully.
  *
- * The two stock pages are both erased before the first program operation. The
- * descriptor page is written first and the page containing all executable
- * feature-report hooks is written last. Pen/timing pages are never erased.
+ * The two complete stock pages are both validated and erased before the first
+ * program operation. The page whose only intended byte change is the HID
+ * descriptor length is written first; the page containing the executable
+ * feature-report branch changes is written last. Pen/timing pages are never
+ * touched.
  */
 export async function activateS62016KProtocolHooks(
   device: WebUsbDfuDevice,
@@ -163,8 +170,8 @@ export async function activateS62016KProtocolHooks(
 
   await eraseAndBlankCheckPages(device, [descriptorPage.address, hookPage.address], onProgress);
 
-  // Non-executable HID descriptor change first; executable branch hooks last.
-  await writeBytes(device, descriptorPage.address, descriptorPage.candidate, onProgress, "write descriptor page");
+  // Descriptor-byte change first; executable branch changes last.
+  await writeBytes(device, descriptorPage.address, descriptorPage.candidate, onProgress, "write descriptor-change page");
   await writeBytes(device, hookPage.address, hookPage.candidate, onProgress, "write executable hook page last");
 
   for (const page of [descriptorPage, hookPage]) {
