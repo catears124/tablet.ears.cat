@@ -136,7 +136,20 @@ export class WebUsbDfuDevice {
     }
     try {
       await this.device.claimInterface(this.interfaceNumber);
-      await this.device.selectAlternateInterface(this.interfaceNumber, 0);
+
+      try {
+        await this.device.selectAlternateInterface(this.interfaceNumber, 0);
+      } catch (error) {
+        // Some Linux WebUSB stacks reject the redundant SET_INTERFACE(0)
+        // even though alternate setting 0 is already active.
+        const activeAlternate = this.device.configuration?.interfaces.find(
+          (iface) => iface.interfaceNumber === this.interfaceNumber,
+        )?.alternate.alternateSetting;
+
+        if (activeAlternate !== 0) {
+          throw error;
+        }
+      }
     } catch (error) {
       throw new DfuError(
         `Cannot claim the DFU interface: ${error instanceof Error ? error.message : String(error)}. ` +
