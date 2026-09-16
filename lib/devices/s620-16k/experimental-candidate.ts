@@ -177,9 +177,12 @@ export async function buildS62016KProtocolCandidate(
     labels: labelsByPage.get(address) ?? [],
   }));
 
-  // Global locality assertion: candidate changes are exactly hook pages plus
-  // however many erased pages contain the relocated runtime.
-  const expectedAllPages = [...hookPages, ...pagesCovered(runtimeAddress, runtimeEnd)];
+  // Global locality assertion: when the runtime was blank, candidate changes
+  // are hook pages plus the runtime pages. On a resumed staged device, the
+  // runtime is already identical and only the hook pages may differ.
+  const expectedAllPages = runtimeWasAlreadyStaged
+    ? hookPages
+    : [...hookPages, ...pagesCovered(runtimeAddress, runtimeEnd)];
   assertSameAddressSet(changedPageAddresses(fullFlash, candidate), expectedAllPages, "complete protocol candidate");
 
   return {
