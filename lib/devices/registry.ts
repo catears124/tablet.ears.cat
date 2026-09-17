@@ -1,11 +1,12 @@
 import type { DeviceAdapter } from "./types";
 import { s620 } from "./s620";
+import { s62016k } from "./s620-16k";
 
 /**
  * Supported device adapters. Adding a tablet means adding an adapter here, not
  * editing the installer or configurator.
  */
-export const ADAPTERS: readonly DeviceAdapter[] = [s620];
+export const ADAPTERS: readonly DeviceAdapter[] = [s620, s62016k];
 
 export const DEFAULT_ADAPTER = s620;
 

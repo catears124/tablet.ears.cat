@@ -1,6 +1,6 @@
 # Gaomon S620 (16K) port
 
-This directory is the isolated bring-up for the 16K-pressure S620 revision.
+This directory contains the 16K-pressure S620 revision port.
 
 ## Pinned device
 
@@ -16,7 +16,7 @@ The original S620 runtime base (`0x0800cc00`) overlaps `0x124` bytes of this sto
 
 ## Verified old -> 16K mappings
 
-The protocol/runtime scaffold currently rebases verified counterparts for:
+The runtime port rebases verified counterparts for:
 
 - vendor feature-report helper/continuation/dispatch path
 - smoothing helper: `0x08004a90 -> 0x08004ac4`
@@ -24,46 +24,78 @@ The protocol/runtime scaffold currently rebases verified counterparts for:
 - delay helper: `0x08006b2e -> 0x08006b96`
 - barrel-button helper: `0x08006cb4 -> 0x08006d1c`
 
-The first hardware candidate enables only the protocol path:
+The protocol hooks are:
 
 - `0x0800b824` -> runtime `+0x004`
 - `0x0800b884` -> runtime `+0x032`
 - `0x0800b994` -> runtime `+0x064`
 - `0x0800c7e5: 9507 -> 9520` (feature report 0x16 becomes 32 bytes)
 
-Every hook carries an exact stock preimage guard. The three 8-byte hook preimages and the descriptor preimage are unique in the pinned 128 KiB dump.
+Every hook carries an exact stock preimage guard.
 
-## /experimental bring-up
+## /experimental protocol bring-up
 
-The main installer still does not register this adapter. `/experimental` is intentionally separate and the first pass is pinned to the exact pre-test unit backup.
+The isolated `/experimental` path remains available for the original protocol-only bring-up. It is pinned to the exact first test-unit full backup and deliberately leaves timing/filtering hooks untouched.
 
-The test is staged so the highest-risk operation is last:
+The test sequence was:
 
 1. Read the complete 128 KiB flash twice and require byte identity.
-2. Require the exact pinned stock application and exact first test-unit full backup hash.
-3. Build the relocated runtime and prove candidate changes are limited to the runtime pages plus stock pages `0x0800b800` and `0x0800c400`.
-4. Force a recovery-backup download before write controls unlock.
-5. Stage the runtime at `0x0800d000` without erasing anything. It is inert because no stock branch points to it yet. Read it back byte-for-byte.
-6. Close the DFU session. The user physically re-enters DFU before activation, preserving the existing no-erase-after-program invariant.
-7. Re-read the staged runtime and both complete stock activation pages. Refuse unless all match the verified candidate inputs.
-8. Erase and blank-check only `0x0800c400` and `0x0800b800` before any write.
-9. Program the non-executable HID-descriptor page first and the executable feature-report hook page last. Read both back byte-for-byte.
-10. Reboot normally and perform only read-only WebHID checks: 32-byte runtime framing, `GET_INFO`, `GET_CONFIG`, and observation of unchanged pen report `0x08` traffic.
+2. Require the exact pinned stock application and first test-unit full-backup hash.
+3. Build the relocated runtime and prove candidate locality.
+4. Require a recovery-backup download before writes.
+5. Stage the runtime at `0x0800d000` without erase and read it back.
+6. Re-enter DFU in a fresh session.
+7. Re-read the staged runtime and complete stock activation pages.
+8. Erase/blank-check only the two protocol activation pages.
+9. Program descriptor page first, executable hook page last, then read both back.
+10. Reboot normally and verify runtime framing, `GET_INFO`, `GET_CONFIG`, and unchanged pen report `0x08` traffic.
 
-No timing, smoothing, averaging, barrel-button or persistence write hook is active in this test.
+## Hardware validation
 
-## Recovery
+The protocol-only candidate was validated on a second independently owned S620 16K with a byte-identical full 128 KiB stock image. The second unit:
 
-`/experimental` accepts only the exact pinned pre-test full-flash backup for recovery. On a fresh DFU session it erases every page the experiment can touch, restores the original stock pages from that backup, leaves the originally-erased runtime pages erased, and verifies every page afterward. The resident bootloader is outside every experimental erase/write range.
+- staged and read back the relocated runtime successfully;
+- activated and read back both protocol pages byte-identically;
+- booted normally;
+- returned valid `GET_INFO` and `GET_CONFIG` responses (`runtime 1.1`, model `0x1620`, firmware `0x260527`, `LiveConfig`);
+- preserved normal pen report `0x08` traffic (thousands of reports observed);
+- restored back to the exact pre-test stock image successfully.
 
-A live flash can never be mathematically zero-risk (for example, physical power loss during an erase/program transaction), but this sequence minimizes the write surface and keeps the DFU bootloader untouched so the failure mode remains a DFU restore rather than a bootloader overwrite.
+## Normal installer: `s620-16k (experimental)`
 
-## Still blocked before production support
+The normal site exposes the revision as `s620-16k (experimental)`.
 
-- prove protocol-only candidate boots on hardware
-- prove normal pen report `0x08` remains live while the protocol hooks are active
-- port 16K smoothing semantics instead of assuming the old S620 call contract
-- reverse/measure the 16K timing path; do not inherit the original S620 294-530 Hz measurements
-- validate buttons, pressure, proximity/reacquisition and long-run behavior
-- source/pin a production factory image or define a same-device restore policy
-- only then register a real `DeviceAdapter` in `ADAPTERS`
+The experimental performance build keeps the validated protocol runtime, appends small 16K-specific wrappers, and adds exact-preimage hooks for:
+
+- both coordinate moving-average calls;
+- both EMA calls;
+- all six direct microsecond-delay calls in the two mapped acquisition/setup routines;
+- both mapped barrel-button rescan calls.
+
+After live config initializes, the default profile is:
+
+- target: `550 Hz`;
+- EMA: off (`255`, intercepted as an exact identity path);
+- moving-average window: `1`.
+
+Before live config initializes, the wrappers deliberately preserve stock behavior: EMA uses the stock weight, moving average uses the stock four-sample window, and timing passes the original delay through unchanged. This prevents an uninitialized RAM config from silently selecting the aggressive profile during boot.
+
+The timing wrapper maps targets `294..550` onto the stock delay budget. At 294 the mapping is exact identity. At 550 the delay fraction is `6/227`, matching the minimum settle fraction used by the original S620 experimental timing work. **550 is an experimental target, not a measured 16K ceiling**; the site's `actual` value remains the host-observed HID report rate.
+
+The performance runtime is `0x5e6` bytes and occupies `0x0800d000..0x0800d5e6`, entirely before persistence at `0x0800f800`. The only application pages changed by the full performance patch are:
+
+- `0x08004c00`
+- `0x08007400`
+- `0x08008000`
+- `0x0800b800`
+- `0x0800c400`
+
+The runtime pages are `0x0800d000` and `0x0800d400`. The resident bootloader and all bytes from persistence (`0x0800f800`) through the protected flash tail remain outside every normal-installer write range.
+
+Persistence is intentionally disabled for this experimental adapter. The runtime reports persistence `0`, `SAVE_CONFIG` is disabled in command dispatch, and the normal UI does not expose a save button. Live `SET_CONFIG` remains available.
+
+Because no distributable factory image is pinned for this revision, the normal installer derives the exact factory application from the twice-read device backup. A stock app is accepted directly; a recognized tablet.ears.cat image is normalized by reverting only exact known hook postimages and must then hash to the pinned stock SHA-256. Factory restore also clears the injected runtime pages while preserving the per-device persistence/tail region.
+
+## Next hardware pass
+
+Install the normal experimental build from the dropdown, verify normal boot and pen traffic, connect through `cfg`, confirm `GET_INFO` reports `294..550`, measure the host-observed rate/noise at 550 with EMA off and average window 1, exercise buttons/pressure/proximity, then perform the normal factory restore and read-back check.

@@ -7,7 +7,7 @@ import type { BuildResult, DeviceAdapter } from "@/lib/devices/types";
 import type { TabletConfig } from "@/lib/firmware/config";
 import type { DeviceInfo, Telemetry } from "@/lib/firmware/protocol";
 import { planFlash, type WriteRegion } from "@/lib/firmware/flashplan";
-import { inspectInstalledApplication, sha256Hex, verifyBackupPair, verifyStockApp } from "@/lib/firmware/image";
+import { extractStockApp, inspectInstalledApplication, sha256Hex, verifyBackupPair, verifyStockApp } from "@/lib/firmware/image";
 import { writeAndVerify } from "@/lib/transport/flash-writer";
 import { RateMeter, type RateSnapshot } from "@/lib/transport/rate-meter";
 import { TabletLink } from "@/lib/transport/webhid";
@@ -317,13 +317,41 @@ export function FlashTool() {
     URL.revokeObjectURL(url);
   };
 
-  const getStockApp = async (): Promise<Uint8Array> => {
+  const getStockApp = async (sourceBackup?: Uint8Array): Promise<Uint8Array> => {
     const current = currentAdapter();
     if (stockApp) {
       stage(2, "factory image verified", 100);
       return stockApp;
     }
-    if (!stockFile) throw new Error("no pinned factory image for this tablet");
+
+    if (!stockFile) {
+      if (!sourceBackup) throw new Error("read and verify this tablet before recovering its factory image");
+      stage(2, "recover factory image", 50);
+
+      let recovered = extractStockApp(current, sourceBackup);
+      let verdict = await verifyStockApp(current, recovered);
+      if (!verdict.ok) {
+        const normalized = recovered.slice();
+        for (const site of current.patches.describe()) {
+          if (site.before.length !== site.after.length) continue;
+          const offset = site.address - current.flash.appBase;
+          if (offset < 0 || offset + site.after.length > normalized.length) continue;
+          if (bytesMatchAt(normalized, current.flash.appBase, site.address, site.after)) {
+            normalized.set(site.before, offset);
+          }
+        }
+        recovered = normalized;
+        verdict = await verifyStockApp(current, recovered);
+      }
+      if (!verdict.ok) {
+        throw new Error(`could not reconstruct the pinned factory app from this verified backup: ${verdict.reason}`);
+      }
+
+      setStockApp(recovered);
+      say(`factory firmware recovered from verified device backup: ${current.firmware.buildId}`);
+      stage(2, "factory image verified", 100);
+      return recovered;
+    }
 
     stage(2, "download factory image", 0, `0 / ${formatBytes(stockFile.bytes)}`);
     const response = await fetch(stockFile.downloadPath, { cache: "no-store" });
@@ -382,7 +410,7 @@ export function FlashTool() {
     const installed = await inspectInstalledApplication(current, backup);
     if (installed.status === "unsupported") throw new Error(installed.reason);
 
-    const stock = await getStockApp();
+    const stock = await getStockApp(backup);
     const stockVerdict = await verifyStockApp(current, stock);
     if (!stockVerdict.ok) throw new Error(stockVerdict.reason);
 
@@ -426,9 +454,18 @@ export function FlashTool() {
     if (installed.status === "unsupported") throw new Error(installed.reason);
     if (installed.status === "legacy") say(`older firmware detected: ${installed.buildId}; updating to ${current.firmware.buildId}`);
 
-    const stock = await getStockApp();
+    const stock = await getStockApp(backup);
+    const built = current.patches.build(stock);
+    const regions: WriteRegion[] = [{ address: current.flash.appBase, data: stock, label: "factory application" }];
+    for (const range of built.appended) {
+      regions.push({
+        address: range.start,
+        data: new Uint8Array(range.end - range.start).fill(0xff),
+        label: `clear ${range.label}`,
+      });
+    }
     stage(2, "factory image ready", 100);
-    const flashed = await flashPlan([{ address: current.flash.appBase, data: stock, label: "factory application" }]);
+    const flashed = await flashPlan(regions);
     if (flashed) say("done. unplug and replug tablet to use.");
   });
 
@@ -638,7 +675,7 @@ export function FlashTool() {
                     value={liveConfig.emaWeight}
                     onChange={(event) => setLocalConfig({ ...liveConfig, emaWeight: Number(event.target.value) })}
                   />
-                  <span className="muted">fastest/unstable</span>
+                  <span className="muted">{adapter?.id === "gaomon-s620-16k" ? "off" : "fastest/unstable"}</span>
                 </label>
                 <label className="control-row compact">
                   <span>average window</span>
@@ -659,7 +696,9 @@ export function FlashTool() {
                 </label>
                 <div className="actions config-actions">
                   <button onClick={() => void commitLiveConfig(true)} disabled={busy}>apply</button>
-                  <button onClick={saveConfig} disabled={busy}>save</button>
+                  {normalInfo.capabilities.includes("Persistence") && (
+                    <button onClick={saveConfig} disabled={busy}>save</button>
+                  )}
                   <button onClick={resetConfig} disabled={busy}>reset</button>
                   {telemetry?.unsaved && <span className="muted unsaved-status">unsaved</span>}
                 </div>
