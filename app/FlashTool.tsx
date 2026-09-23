@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ADAPTERS } from "@/lib/devices/registry";
+import { ADAPTERS, fixedFirmwareForAdapter, type FixedFirmwareImage } from "@/lib/devices/registry";
 import { VENDOR_FIRMWARE, decodeVendorImage } from "@/lib/devices/s620/codec";
 import type { BuildResult, DeviceAdapter } from "@/lib/devices/types";
 import type { TabletConfig } from "@/lib/firmware/config";
@@ -134,6 +134,35 @@ async function readDownload(
   return out;
 }
 
+function decodeBase64(value: string): Uint8Array {
+  const raw = atob(value);
+  const out = new Uint8Array(raw.length);
+  for (let index = 0; index < raw.length; index += 1) out[index] = raw.charCodeAt(index);
+  return out;
+}
+
+async function loadFixedFirmwareImage(image: FixedFirmwareImage): Promise<Uint8Array> {
+  const encoded = (
+    await Promise.all(
+      image.parts.map(async (path) => {
+        const response = await fetch(path, { cache: "no-store" });
+        if (!response.ok) throw new Error(`firmware download failed (${response.status})`);
+        return (await response.text()).trim();
+      }),
+    )
+  ).join("");
+
+  const bytes = decodeBase64(encoded);
+  if (bytes.length !== image.bytes) {
+    throw new Error(`firmware length ${bytes.length} != ${image.bytes}`);
+  }
+  const hash = await sha256Hex(bytes);
+  if (hash !== image.sha256) {
+    throw new Error(`firmware SHA-256 ${hash} != ${image.sha256}`);
+  }
+  return bytes;
+}
+
 function ProgressBar({ progress }: { progress: OperationProgress }) {
   return (
     <div className="operation-progress" aria-live="polite">
@@ -210,6 +239,7 @@ export function FlashTool() {
     () => adapter ? VENDOR_FIRMWARE.find((entry) => entry.decodedSha256 === adapter.firmware.stockAppSha256) : undefined,
     [adapter],
   );
+  const fixedFirmware = useMemo(() => fixedFirmwareForAdapter(adapter), [adapter]);
 
   const currentAdapter = () => {
     if (!adapter) throw new Error("select a tablet model first");
@@ -407,6 +437,25 @@ export function FlashTool() {
   const installTabletFirmware = () => guard("install", async () => {
     const current = currentAdapter();
     const backup = await readVerifiedBackup();
+    const fixed = fixedFirmwareForAdapter(current);
+
+    if (fixed) {
+      stage(2, "download stable firmware", 0);
+      const image = await loadFixedFirmwareImage(fixed);
+      stage(2, "stable firmware verified", 100);
+
+      const installed = await inspectInstalledApplication(current, backup);
+      const alreadyFixed = bytesMatchAt(backup, current.flash.flashBase, current.flash.appBase, image);
+      if (installed.status === "unsupported" && !alreadyFixed) throw new Error(installed.reason);
+      if (alreadyFixed) say("existing stable fixed firmware recognized; reinstall allowed");
+
+      const flashed = await flashPlan([
+        { address: current.flash.appBase, data: image, label: fixed.label },
+      ]);
+      if (flashed) say("done. unplug and replug tablet to use.");
+      return;
+    }
+
     const installed = await inspectInstalledApplication(current, backup);
     if (installed.status === "unsupported") throw new Error(installed.reason);
 
@@ -451,7 +500,15 @@ export function FlashTool() {
     const current = currentAdapter();
     const backup = await readVerifiedBackup();
     const installed = await inspectInstalledApplication(current, backup);
-    if (installed.status === "unsupported") throw new Error(installed.reason);
+    if (installed.status === "unsupported") {
+      const fixed = fixedFirmwareForAdapter(current);
+      if (!fixed) throw new Error(installed.reason);
+      const image = await loadFixedFirmwareImage(fixed);
+      if (!bytesMatchAt(backup, current.flash.flashBase, current.flash.appBase, image)) {
+        throw new Error(installed.reason);
+      }
+      say("stable fixed firmware recognized; factory restore allowed");
+    }
     if (installed.status === "legacy") say(`older firmware detected: ${installed.buildId}; updating to ${current.firmware.buildId}`);
 
     const stock = await getStockApp(backup);
@@ -560,8 +617,12 @@ export function FlashTool() {
         </div>
         <nav className="view-nav" aria-label="view">
           <button className={`nav-link ${view === "install" ? "active" : ""}`} onClick={() => setView("install")}>install</button>
-          <span>/</span>
-          <button className={`nav-link ${view === "cfg" ? "active" : ""}`} onClick={() => setView("cfg")}>cfg</button>
+          {!fixedFirmware && (
+            <>
+              <span>/</span>
+              <button className={`nav-link ${view === "cfg" ? "active" : ""}`} onClick={() => setView("cfg")}>cfg</button>
+            </>
+          )}
         </nav>
       </header>
 
@@ -574,12 +635,13 @@ export function FlashTool() {
               const next = ADAPTERS.find((candidate) => candidate.id === event.target.value) ?? null;
               resetConnections();
               setAdapter(next);
+              if (fixedFirmwareForAdapter(next)) setView("install");
             }}
           >
             <option value="" disabled>Tablet model</option>
             {ADAPTERS.map((candidate) => (
               <option key={candidate.id} value={candidate.id}>
-                {candidate.displayName} · {candidate.firmware.buildId}
+                {fixedFirmwareForAdapter(candidate) ? candidate.displayName : `${candidate.displayName} · ${candidate.firmware.buildId}`}
               </option>
             ))}
           </select>
@@ -603,8 +665,8 @@ export function FlashTool() {
               onClick={() => setInstallTarget("tablet")}
               disabled={busy}
             >
-              <strong>tablet.ears.cat</strong>
-              <small>install the custom firmware patch</small>
+              <strong>{fixedFirmware?.label ?? "tablet.ears.cat"}</strong>
+              <small>{fixedFirmware ? "install fixed stable firmware (no cfg)" : "install the custom firmware patch"}</small>
             </button>
             <button
               type="button"
