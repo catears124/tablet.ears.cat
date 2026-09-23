@@ -33,9 +33,9 @@ The protocol hooks are:
 
 Every hook carries an exact stock preimage guard.
 
-## /experimental protocol bring-up
+## Protocol bring-up history
 
-The isolated `/experimental` path remains available for the original protocol-only bring-up. It is pinned to the exact first test-unit full backup and deliberately leaves timing/filtering hooks untouched.
+The original protocol-only bring-up was pinned to the exact first test-unit full backup and deliberately left timing/filtering hooks untouched.
 
 The test sequence was:
 
@@ -61,11 +61,11 @@ The protocol-only candidate was validated on a second independently owned S620 1
 - preserved normal pen report `0x08` traffic (thousands of reports observed);
 - restored back to the exact pre-test stock image successfully.
 
-## Normal installer: `s620-16k (experimental)`
+## Normal installer: `s620-16k`
 
-The normal site exposes the revision as `s620-16k (experimental)`.
+The normal site exposes the revision as `s620-16k`.
 
-The experimental performance build keeps the validated protocol runtime, appends small 16K-specific wrappers, and adds exact-preimage hooks for:
+The production performance build keeps the validated protocol runtime, appends small 16K-specific wrappers, and adds exact-preimage hooks for:
 
 - both coordinate moving-average calls;
 - both EMA calls;
@@ -80,7 +80,7 @@ After live config initializes, the default profile is:
 
 Before live config initializes, the wrappers deliberately preserve stock behavior: EMA uses the stock weight, moving average uses the stock four-sample window, and timing passes the original delay through unchanged. This prevents an uninitialized RAM config from silently selecting the aggressive profile during boot.
 
-The timing wrapper maps targets `294..550` onto the stock delay budget. At 294 the mapping is exact identity. At 550 the delay fraction is `6/227`, matching the minimum settle fraction used by the original S620 experimental timing work. **550 is an experimental target, not a measured 16K ceiling**; the site's `actual` value remains the host-observed HID report rate.
+The timing wrapper maps targets `294..550` onto the stock delay budget. At 294 the mapping is exact identity. At 550 the delay fraction is `6/227`, matching the minimum settle fraction used by the original S620 timing work. **550 is the configured 16K target, not a measured ceiling**; the site's `actual` value remains the host-observed HID report rate.
 
 The performance runtime is `0x5e6` bytes and occupies `0x0800d000..0x0800d5e6`, entirely before persistence at `0x0800f800`. The only application pages changed by the full performance patch are:
 
@@ -92,10 +92,10 @@ The performance runtime is `0x5e6` bytes and occupies `0x0800d000..0x0800d5e6`, 
 
 The runtime pages are `0x0800d000` and `0x0800d400`. The resident bootloader and all bytes from persistence (`0x0800f800`) through the protected flash tail remain outside every normal-installer write range.
 
-Persistence is intentionally disabled for this experimental adapter. The runtime reports persistence `0`, `SAVE_CONFIG` is disabled in command dispatch, and the normal UI does not expose a save button. Live `SET_CONFIG` remains available.
+Persistence is intentionally disabled for this adapter. The runtime reports persistence `0`, `SAVE_CONFIG` is disabled in command dispatch, and the normal UI does not expose a save button. Live `SET_CONFIG` remains available.
 
 Because no distributable factory image is pinned for this revision, the normal installer derives the exact factory application from the twice-read device backup. A stock app is accepted directly; a recognized tablet.ears.cat image is normalized by reverting only exact known hook postimages and must then hash to the pinned stock SHA-256. Factory restore also clears the injected runtime pages while preserving the per-device persistence/tail region.
 
 ## Next hardware pass
 
-Install the normal experimental build from the dropdown, verify normal boot and pen traffic, connect through `cfg`, confirm `GET_INFO` reports `294..550`, measure the host-observed rate/noise at 550 with EMA off and average window 1, exercise buttons/pressure/proximity, then perform the normal factory restore and read-back check.
+Install the normal build from the dropdown, verify normal boot and pen traffic, connect through `cfg`, confirm `GET_INFO` reports `294..550`, measure the host-observed rate/noise at 550 with EMA off and average window 1, exercise buttons/pressure/proximity, then perform the normal factory restore and read-back check.

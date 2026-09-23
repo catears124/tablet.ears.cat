@@ -94,7 +94,7 @@ const TIMING_CALLS = [
   { address: 0x08004e5e, before: "01f09afe" },
 ] as const;
 
-/** Build the normal-site experimental 16K runtime. */
+/** Build the normal-site 16K runtime. */
 export function buildS62016KPerformanceRuntimeBlob(): Uint8Array {
   const research = buildS62016KRuntimeResearchBlob();
   if (research.length !== RESEARCH_RUNTIME_BYTES) {

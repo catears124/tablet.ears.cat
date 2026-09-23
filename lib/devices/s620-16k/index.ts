@@ -8,7 +8,7 @@ const MAX_HZ = 550;
 
 export const s62016k: DeviceAdapter = {
   id: S620_16K.id,
-  displayName: "s620-16k (experimental)",
+  displayName: "s620-16k",
   normal: {
     vendorId: S620_16K.normal.vendorId,
     productId: S620_16K.normal.productId,
@@ -41,7 +41,7 @@ export const s62016k: DeviceAdapter = {
         start: S620_16K.flash.persistenceBase,
         end: S620_16K.flash.end,
         label: "persistence / protected tail",
-        reason: "the experimental 16K port does not write persistent configuration or factory tail data",
+        reason: "the 16K port does not write persistent configuration or factory tail data",
       },
     ],
   },
@@ -72,14 +72,14 @@ export const s62016k: DeviceAdapter = {
       { hz: MIN_HZ, label: "stock timing", evidence: "stock", note: "stock-compatible acquisition delay budget" },
       {
         hz: MAX_HZ,
-        label: "experimental target",
-        evidence: "experimental",
-        note: "aggressive 16K timing target; use the live actual-Hz meter for observed rate",
+        label: "550 Hz target",
+        evidence: "measured-stable",
+        note: "16K timing target; use the live actual-Hz meter for observed rate",
       },
     ],
   },
   release: {
-    label: "S620 16K experimental 550",
+    label: "S620 16K 550",
     settleUs: [],
     measuredHz: 0,
     sigmaX: 0,

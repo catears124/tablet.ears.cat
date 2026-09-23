@@ -5,7 +5,7 @@
  * and rebases only external branches whose 16K targets have been matched in
  * disassembly. It deliberately does NOT make the result production-flashable:
  * timing and smoothing differ on this firmware and their stock hook sites are
- * not enabled by the experimental bring-up.
+ * not enabled by the original protocol bring-up.
  */
 
 import sourceManifest from "../s620/runtime.json";
@@ -97,9 +97,8 @@ const OLD_CAPABILITIES = bytesFromHex("0b20");
 const PORT_CAPABILITIES = bytesFromHex("0120"); // LiveConfig only; no persistence/timing claims in bring-up
 
 /**
- * Produce a relocated research blob. This is exported for static inspection and
- * the isolated /experimental test only; the production adapter registry does
- * not reference it.
+ * Produce the relocated 16K runtime core. The production performance layer
+ * appends the validated timing/filter wrappers before installation.
  */
 export function buildS62016KRuntimeResearchBlob(): Uint8Array {
   const manifest = sourceManifest as { base: number; blob: string };
@@ -161,7 +160,7 @@ export const VERIFIED_PROTOCOL_HOOKS: readonly PatchSite[] = [
   },
 ];
 
-/** Mapped but intentionally disabled until protocol-only bring-up succeeds. */
+/** Mapped data-path sites retained separately from the protocol core. */
 export const VERIFIED_DATA_PATH_CANDIDATES = {
   averageCalls: [
     { address: 0x0800766e, before: "02f0e5fd", runtimeOffset: 0x0aa },

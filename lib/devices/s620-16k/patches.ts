@@ -56,7 +56,7 @@ export class S62016KPatchBuilder implements PatchBuilder {
         {
           start: S620_16K.flash.extensionBase,
           end: runtimeEnd,
-          label: "S620 16K experimental runtime",
+          label: "S620 16K runtime",
           reason: "relocated live configuration, no-smoothing and timing-control runtime",
         },
       ],
