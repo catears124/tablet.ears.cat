@@ -31,6 +31,12 @@ function decodeBase64(value: string): Uint8Array {
   return bytes;
 }
 
+function exactBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
 async function loadFirmware(): Promise<Uint8Array> {
   const encoded = (
     await Promise.all(
@@ -49,16 +55,16 @@ async function loadFirmware(): Promise<Uint8Array> {
 
   const key = await crypto.subtle.importKey(
     "raw",
-    keyBytes,
+    exactBuffer(keyBytes),
     "AES-GCM",
     false,
     ["decrypt"],
   );
   const plain = new Uint8Array(
     await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv, additionalData },
+      { name: "AES-GCM", iv: exactBuffer(iv), additionalData: exactBuffer(additionalData) },
       key,
-      encrypted,
+      exactBuffer(encrypted),
     ),
   );
 
